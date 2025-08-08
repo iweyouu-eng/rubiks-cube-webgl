@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Rubik's Cube – WebGL v3</title>
+  <title>Rubik's Cube – WebGL v3.1 (Import Map Fix)</title>
   <style>
     :root{
       --card-bg: rgba(0,0,0,.55);
@@ -27,7 +27,27 @@
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     #moves { font-size:12px; color:#ddd; }
     #help li { margin: 6px 0; }
+    #err { position:fixed; left:10px; bottom:10px; background:#c00; color:#fff; padding:8px 10px; border-radius:8px; font-size:12px; z-index:9999; white-space:pre-wrap; display:none; }
   </style>
+
+  <!-- Error overlay (helps when module import fails) -->
+  <script>
+    (function(){
+      function show(msg){ var e=document.getElementById('err'); if(!e){ e=document.createElement('div'); e.id='err'; document.body.appendChild(e);} e.style.display='block'; e.textContent=msg; }
+      window.addEventListener('error', function(e){ show('에러: '+ (e.message||e.toString())); });
+      window.addEventListener('unhandledrejection', function(e){ var r=e.reason; show('Promise 에러: '+ (r && (r.message||r.toString()) || 'unknown')); });
+    })();
+  </script>
+
+  <!-- Import map: resolves bare specifier 'three' used inside OrbitControls -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/"
+    }
+  }
+  </script>
 </head>
 <body>
   <div id="layout">
@@ -69,8 +89,8 @@
   </div>
 
   <script type="module">
-    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js";
-    import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/OrbitControls.js";
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
     // ---- DOM ----
     const stage = document.getElementById('stage');
@@ -142,7 +162,7 @@
     const COLORS = { U:0xffff00, D:0xffffff, F:0x00a84f, B:0x0041a8, L:0xc41e3a, R:0xff5800 };
 
     function makeCubelet(ix, iy, iz){
-      // BoxGeometry group order: +x,-x,+y,-y,+z,-z
+      // +x,-x,+y,-y,+z,-z
       const mats = [
         new THREE.MeshStandardMaterial({ color: COLORS.R, metalness:0.12, roughness:0.35 }), // +x -> R
         new THREE.MeshStandardMaterial({ color: COLORS.L, metalness:0.12, roughness:0.35 }), // -x -> L
@@ -154,7 +174,7 @@
       const geo = new THREE.BoxGeometry(0.98,0.98,0.98);
       const mesh = new THREE.Mesh(geo, mats);
       mesh.position.set(ix*gap, iy*gap, iz*gap);
-      mesh.userData.idx = { x: ix, y: iy, z: iz }; // logical index
+      mesh.userData.idx = { x: ix, y: iy, z: iz };
       return mesh;
     }
 
@@ -180,7 +200,7 @@
     // ---- Moves / Animation ----
     const ALL_MOVES = ['U',"U'",'U2','D',"D'",'D2','L',"L'",'L2','R',"R'",'R2','F',"F'",'F2','B',"B'",'B2'];
     const moves = [];
-    const history = []; // store inverse moves
+    const history = [];
     let ANIM_MS = 160;
     let SNAP = false;
     let animating = false;
@@ -212,7 +232,6 @@
     }
 
     function isSolved(){
-      const eps = 1e-3;
       for(const c of group.children){
         const ix = Math.round(c.position.x / gap);
         const iy = Math.round(c.position.y / gap);
@@ -242,7 +261,6 @@
       return seq;
     }
 
-    // Axis mapping & sign (clockwise seen from outside -> negative around outward normal)
     const AXIS = {
       U: { axis: new THREE.Vector3(0,1,0), layer:+1, sign:+1 },
       D: { axis: new THREE.Vector3(0,1,0), layer:-1, sign:-1 },
@@ -259,7 +277,6 @@
       return { f, prime, twice };
     }
 
-    // Select layer members by index with tolerance
     function inLayer(obj, axisName, layer){
       if(axisName==='x') return layer>0? (obj.position.x > 0.5*gap) : (obj.position.x < -0.5*gap);
       if(axisName==='y') return layer>0? (obj.position.y > 0.5*gap) : (obj.position.y < -0.5*gap);
@@ -270,9 +287,7 @@
     const pivot = new THREE.Group();
     group.add(pivot);
 
-    function ease(t){
-      return SNAP ? t : (1-Math.pow(1-t,3)); // cubic ease-out
-    }
+    function ease(t){ return SNAP ? t : (1-Math.pow(1-t,3)); }
 
     function roundToGrid(obj){
       obj.position.x = Math.round(obj.position.x / gap) * gap;
@@ -333,7 +348,6 @@
       if(pushHistory) history.push(inverseMove(m));
     }
 
-    // UI buttons for moves
     const bases = ['U','D','L','R','F','B'];
     function makeBtn(text, cb){ const b=document.createElement('button'); b.className='btn'; b.textContent=text; b.addEventListener('click', cb); return b; }
     for(const base of bases){
@@ -344,7 +358,6 @@
       moveButtonsGrid.appendChild(wrap);
     }
 
-    // Controls
     btnReset.addEventListener('click', async ()=>{
       if(animating || scrambling) return;
       moves.length = 0; history.length = 0; updateMovesUI();
@@ -358,10 +371,7 @@
       await doMove(inv, false);
       moves.pop(); updateMovesUI();
     });
-    btnResetView.addEventListener('click', ()=>{
-      controls.reset();
-      camera.position.set(6,6,6);
-    });
+    btnResetView.addEventListener('click', ()=>{ controls.reset(); camera.position.set(6,6,6); });
 
     btnScramble.addEventListener('click', async ()=>{
       if(animating || scrambling) return;
@@ -374,7 +384,6 @@
       scrambling = false; renderStatus(); setButtonsDisabled(false);
     });
 
-    // Keyboard
     window.addEventListener('keydown', (e)=>{
       const k = e.key.toLowerCase();
       const baseMap = { u:'U', d:'D', l:'L', r:'R', f:'F', b:'B' };
@@ -388,7 +397,6 @@
       }
     });
 
-    // Render loop
     renderer.setAnimationLoop(()=>{
       controls.update();
       renderer.render(scene, camera);
@@ -398,5 +406,7 @@
 
     renderStatus(); updateMovesUI();
   </script>
+
+  <div id="err"></div>
 </body>
 </html>
