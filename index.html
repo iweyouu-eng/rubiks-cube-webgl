@@ -1,11 +1,118 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8" />
-    <title>나의 첫 웹페이지</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rubik's Cube – WebGL</title>
+  <style>
+    html, body { margin:0; height:100%; background:#111; color:#fff; }
+    #app { position:fixed; inset:0; }
+    canvas { display:block; width:100%; height:100%; touch-action:none; }
+    #ui { position:fixed; left:10px; top:10px; z-index:10; background:rgba(0,0,0,.5); padding:8px 10px; border-radius:8px; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    #ui button { margin:2px 3px; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,.15); background:#1b1b1b; color:#fff; }
+  </style>
 </head>
 <body>
-    <h1>안녕하세요, GitHub Pages!</h1>
-    <p>이것은 index.html 파일입니다.</p>
+  <div id="app"></div>
+  <div id="ui">
+    <button id="btnReset">리셋</button>
+    <button id="btnSpin">회전</button>
+  </div>
+
+  <!-- ES Modules로 Three와 OrbitControls를 올바른 순서로 import -->
+  <script type="module">
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js";
+    import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/OrbitControls.js";
+
+    // 렌더러
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false, powerPreference:"high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.getElementById("app").appendChild(renderer.domElement);
+
+    // 씬/카메라/컨트롤
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x111111);
+
+    const camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.1, 100);
+    camera.position.set(6, 6, 6);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.rotateSpeed = 0.4;
+    controls.zoomSpeed = 0.8;
+    controls.enablePan = false;
+
+    // 라이트 (광택 느낌)
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dir1 = new THREE.DirectionalLight(0xffffff, 0.9); dir1.position.set(5,10,7);
+    const dir2 = new THREE.DirectionalLight(0xffffff, 0.4); dir2.position.set(-6,-4,3);
+    scene.add(dir1, dir2);
+
+    // 큐브 그룹
+    const group = new THREE.Group();
+    scene.add(group);
+
+    // 큐브렛(스티커 색상 재질)
+    const COLORS = {
+      U: 0xffff00, // 노랑
+      D: 0xffffff, // 흰
+      F: 0x00a84f, // 초록
+      B: 0x0041a8, // 파랑
+      L: 0xc41e3a, // 빨강
+      R: 0xff5800  // 주황
+    };
+
+    function makeCubelet(x, y, z) {
+      // 각 면 색상 재질(상/하/앞/뒤/좌/우 순서)
+      const mats = [
+        new THREE.MeshStandardMaterial({ color: COLORS.U, metalness: 0.1, roughness: 0.35 }),
+        new THREE.MeshStandardMaterial({ color: COLORS.D, metalness: 0.1, roughness: 0.35 }),
+        new THREE.MeshStandardMaterial({ color: COLORS.F, metalness: 0.1, roughness: 0.35 }),
+        new THREE.MeshStandardMaterial({ color: COLORS.B, metalness: 0.1, roughness: 0.35 }),
+        new THREE.MeshStandardMaterial({ color: COLORS.L, metalness: 0.1, roughness: 0.35 }),
+        new THREE.MeshStandardMaterial({ color: COLORS.R, metalness: 0.1, roughness: 0.35 }),
+      ];
+      const geo = new THREE.BoxGeometry(0.98, 0.98, 0.98);
+      const mesh = new THREE.Mesh(geo, mats);
+      mesh.position.set(x, y, z);
+      return mesh;
+    }
+
+    // 3x3x3 배치
+    const gap = 1.05;
+    for (let i=-1;i<=1;i++)
+      for (let j=-1;j<=1;j++)
+        for (let k=-1;k<=1;k++)
+          group.add(makeCubelet(i*gap, j*gap, k*gap));
+
+    // 리사이즈
+    function onResize() {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h);
+      camera.aspect = w/h;
+      camera.updateProjectionMatrix();
+    }
+    window.addEventListener("resize", onResize);
+
+    // 간단한 데모 회전
+    let spinning = false;
+    document.getElementById("btnSpin").addEventListener("click", () => { spinning = !spinning; });
+    document.getElementById("btnReset").addEventListener("click", () => {
+      spinning = false;
+      group.rotation.set(0,0,0);
+      controls.reset();
+      camera.position.set(6,6,6);
+    });
+
+    // 루프
+    renderer.setAnimationLoop(() => {
+      if (spinning) group.rotation.y += 0.01;
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
 </body>
 </html>
