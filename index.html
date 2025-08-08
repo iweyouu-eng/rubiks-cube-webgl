@@ -3,40 +3,124 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Rubik's Cube – WebGL</title>
+  <title>Rubik's Cube – WebGL v3</title>
   <style>
-    html, body { margin:0; height:100%; background:#111; color:#fff; }
-    #app { position:fixed; inset:0; }
-    canvas { display:block; width:100%; height:100%; touch-action:none; }
-    #ui { position:fixed; left:10px; top:10px; z-index:10; background:rgba(0,0,0,.5); padding:8px 10px; border-radius:8px; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-    #ui button { margin:2px 3px; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,.15); background:#1b1b1b; color:#fff; }
+    :root{
+      --card-bg: rgba(0,0,0,.55);
+      --btn-bg: #1b1b1b;
+      --btn-border: rgba(255,255,255,.18);
+    }
+    html, body { margin:0; height:100%; background:#111; color:#fff; font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    #layout { display:grid; grid-template-columns: 1fr; gap:10px; padding:10px; max-width:1000px; margin:0 auto; }
+    @media (min-width: 980px){ #layout { grid-template-columns: 1.2fr .8fr; } }
+    .card { background:var(--card-bg); border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:10px; }
+    #stage { position:relative; height:60vh; min-height:380px; border-radius:10px; overflow:hidden; }
+    #stage canvas { display:block; width:100%; height:100%; touch-action:none; }
+    #status { position:absolute; right:10px; top:10px; display:flex; gap:6px; z-index:6; }
+    .badge { background:rgba(0,0,0,.7); padding:4px 8px; border-radius:999px; border:1px solid rgba(255,255,255,.15); font-size:12px; display:inline-flex; gap:6px; align-items:center; }
+    .spinner{ width:10px; height:10px; border-radius:50%; border:2px solid rgba(255,255,255,.35); border-top-color:#fff; animation:spin 1s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    #controls .row{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+    .btn { background:var(--btn-bg); color:#fff; border:1px solid var(--btn-border); border-radius:8px; padding:8px 10px; cursor:pointer; }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .toggle, .slider { display:flex; align-items:center; gap:8px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    #moves { font-size:12px; color:#ddd; }
+    #help li { margin: 6px 0; }
   </style>
 </head>
 <body>
-  <div id="app"></div>
-  <div id="ui">
-    <button id="btnReset">리셋</button>
-    <button id="btnSpin">회전</button>
+  <div id="layout">
+    <!-- 1) CUBE -->
+    <div class="card" id="stage">
+      <div id="status"></div>
+    </div>
+
+    <!-- 2) CONTROLS -->
+    <div class="card" id="controls">
+      <div class="row">
+        <button id="btn-scramble" class="btn">섞기(25)</button>
+        <button id="btn-reset" class="btn">리셋</button>
+        <button id="btn-undo" class="btn">되돌리기</button>
+        <button id="btn-reset-view" class="btn">뷰 리셋</button>
+      </div>
+      <div class="row">
+        <div class="slider">
+          <label for="speed">속도</label>
+          <input id="speed" type="range" min="60" max="400" step="10" value="160" />
+          <span id="speedv" class="mono">160ms</span>
+        </div>
+        <label class="toggle"><input type="checkbox" id="sound" checked /> 🔊 사운드</label>
+        <label class="toggle"><input type="checkbox" id="snap" /> 스냅 회전</label>
+      </div>
+      <div class="row" id="move-buttons"></div>
+      <div id="moves">총 <span id="moves-count">0</span> 수: <span id="moves-list" class="mono"></span></div>
+    </div>
+
+    <!-- 3) HELP -->
+    <div class="card" id="help">
+      <h3 style="margin:6px 0 10px 0;">도움말</h3>
+      <ul>
+        <li>마우스 드래그/터치로 시점 회전, 휠/핀치로 줌</li>
+        <li>키보드: <b>U R F D L B</b> (Shift=프라임 '), <b>2</b>=더블</li>
+        <li>애니메이션 중에는 버튼이 잠깁니다. (상단 상태 표시 참고)</li>
+      </ul>
+    </div>
   </div>
 
-  <!-- ES Modules로 Three와 OrbitControls를 올바른 순서로 import -->
   <script type="module">
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js";
     import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/controls/OrbitControls.js";
 
-    // 렌더러
+    // ---- DOM ----
+    const stage = document.getElementById('stage');
+    const statusWrap = document.getElementById('status');
+    const btnScramble = document.getElementById('btn-scramble');
+    const btnReset = document.getElementById('btn-reset');
+    const btnUndo = document.getElementById('btn-undo');
+    const btnResetView = document.getElementById('btn-reset-view');
+    const moveButtonsGrid = document.getElementById('move-buttons');
+    const speed = document.getElementById('speed');
+    const speedv = document.getElementById('speedv');
+    const soundToggle = document.getElementById('sound');
+    const snapToggle = document.getElementById('snap');
+    const movesCountEl = document.getElementById('moves-count');
+    const movesListEl = document.getElementById('moves-list');
+
+    // ---- WebAudio (click) ----
+    let audioCtx = null;
+    let SOUND = true;
+    soundToggle.addEventListener('change', ()=>{ SOUND = !!soundToggle.checked; });
+    function initAudio(){
+      if(audioCtx) return;
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { SOUND = false; soundToggle.checked=false; }
+    }
+    function clickSound(){
+      if(!SOUND) return;
+      if(!audioCtx) initAudio();
+      if(!audioCtx) return;
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(650, audioCtx.currentTime);
+      g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.2, audioCtx.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.09);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(); o.stop(audioCtx.currentTime + 0.12);
+    }
+
+    // ---- THREE setup ----
     const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false, powerPreference:"high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    document.getElementById("app").appendChild(renderer.domElement);
+    stage.appendChild(renderer.domElement);
 
-    // 씬/카메라/컨트롤
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x111111);
 
-    const camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.1, 100);
-    camera.position.set(6, 6, 6);
+    const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
+    camera.position.set(6,6,6);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -45,74 +129,274 @@
     controls.zoomSpeed = 0.8;
     controls.enablePan = false;
 
-    // 라이트 (광택 느낌)
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dir1 = new THREE.DirectionalLight(0xffffff, 0.9); dir1.position.set(5,10,7);
-    const dir2 = new THREE.DirectionalLight(0xffffff, 0.4); dir2.position.set(-6,-4,3);
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const dir1 = new THREE.DirectionalLight(0xffffff, 1.0); dir1.position.set(5,10,7);
+    const dir2 = new THREE.DirectionalLight(0xffffff, 0.5); dir2.position.set(-6,-4,3);
     scene.add(dir1, dir2);
 
-    // 큐브 그룹
+    // ---- Cube build ----
     const group = new THREE.Group();
     scene.add(group);
+    const gap = 1.04; // distance between centers
+    const COLORS = { U:0xffff00, D:0xffffff, F:0x00a84f, B:0x0041a8, L:0xc41e3a, R:0xff5800 };
 
-    // 큐브렛(스티커 색상 재질)
-    const COLORS = {
-      U: 0xffff00, // 노랑
-      D: 0xffffff, // 흰
-      F: 0x00a84f, // 초록
-      B: 0x0041a8, // 파랑
-      L: 0xc41e3a, // 빨강
-      R: 0xff5800  // 주황
-    };
-
-    function makeCubelet(x, y, z) {
-      // 각 면 색상 재질(상/하/앞/뒤/좌/우 순서)
+    function makeCubelet(ix, iy, iz){
+      // BoxGeometry group order: +x,-x,+y,-y,+z,-z
       const mats = [
-        new THREE.MeshStandardMaterial({ color: COLORS.U, metalness: 0.1, roughness: 0.35 }),
-        new THREE.MeshStandardMaterial({ color: COLORS.D, metalness: 0.1, roughness: 0.35 }),
-        new THREE.MeshStandardMaterial({ color: COLORS.F, metalness: 0.1, roughness: 0.35 }),
-        new THREE.MeshStandardMaterial({ color: COLORS.B, metalness: 0.1, roughness: 0.35 }),
-        new THREE.MeshStandardMaterial({ color: COLORS.L, metalness: 0.1, roughness: 0.35 }),
-        new THREE.MeshStandardMaterial({ color: COLORS.R, metalness: 0.1, roughness: 0.35 }),
+        new THREE.MeshStandardMaterial({ color: COLORS.R, metalness:0.12, roughness:0.35 }), // +x -> R
+        new THREE.MeshStandardMaterial({ color: COLORS.L, metalness:0.12, roughness:0.35 }), // -x -> L
+        new THREE.MeshStandardMaterial({ color: COLORS.U, metalness:0.12, roughness:0.35 }), // +y -> U
+        new THREE.MeshStandardMaterial({ color: COLORS.D, metalness:0.12, roughness:0.35 }), // -y -> D
+        new THREE.MeshStandardMaterial({ color: COLORS.F, metalness:0.12, roughness:0.35 }), // +z -> F
+        new THREE.MeshStandardMaterial({ color: COLORS.B, metalness:0.12, roughness:0.35 })  // -z -> B
       ];
-      const geo = new THREE.BoxGeometry(0.98, 0.98, 0.98);
+      const geo = new THREE.BoxGeometry(0.98,0.98,0.98);
       const mesh = new THREE.Mesh(geo, mats);
-      mesh.position.set(x, y, z);
+      mesh.position.set(ix*gap, iy*gap, iz*gap);
+      mesh.userData.idx = { x: ix, y: iy, z: iz }; // logical index
       return mesh;
     }
 
-    // 3x3x3 배치
-    const gap = 1.05;
-    for (let i=-1;i<=1;i++)
-      for (let j=-1;j<=1;j++)
-        for (let k=-1;k<=1;k++)
-          group.add(makeCubelet(i*gap, j*gap, k*gap));
+    function buildCube(){
+      group.clear();
+      for(let x=-1;x<=1;x++) for(let y=-1;y<=1;y++) for(let z=-1;z<=1;z++){
+        const m = makeCubelet(x,y,z);
+        group.add(m);
+      }
+    }
+    buildCube();
 
-    // 리사이즈
-    function onResize() {
-      const w = window.innerWidth, h = window.innerHeight;
-      renderer.setSize(w, h);
-      camera.aspect = w/h;
+    // ---- Resize ----
+    function onResize(){
+      const rect = stage.getBoundingClientRect();
+      renderer.setSize(rect.width, rect.height, false);
+      camera.aspect = rect.width/rect.height;
       camera.updateProjectionMatrix();
     }
-    window.addEventListener("resize", onResize);
+    window.addEventListener('resize', onResize);
+    onResize();
 
-    // 간단한 데모 회전
-    let spinning = false;
-    document.getElementById("btnSpin").addEventListener("click", () => { spinning = !spinning; });
-    document.getElementById("btnReset").addEventListener("click", () => {
-      spinning = false;
-      group.rotation.set(0,0,0);
+    // ---- Moves / Animation ----
+    const ALL_MOVES = ['U',"U'",'U2','D',"D'",'D2','L',"L'",'L2','R',"R'",'R2','F',"F'",'F2','B',"B'",'B2'];
+    const moves = [];
+    const history = []; // store inverse moves
+    let ANIM_MS = 160;
+    let SNAP = false;
+    let animating = false;
+    let scrambling = false;
+
+    speed.addEventListener('input', ()=>{ ANIM_MS = parseInt(speed.value,10)||160; speedv.textContent = ANIM_MS+'ms'; });
+    snapToggle.addEventListener('change', ()=>{ SNAP = !!snapToggle.checked; });
+
+    function setButtonsDisabled(dis){
+      document.querySelectorAll('button').forEach(b=> b.disabled = dis);
+    }
+
+    function updateMovesUI(){
+      movesCountEl.textContent = String(moves.length);
+      movesListEl.textContent = moves.join(' ');
+    }
+
+    function renderStatus(){
+      statusWrap.innerHTML='';
+      if(animating){
+        const s=document.createElement('span'); s.className='badge'; s.innerHTML='<span class="spinner"></span>회전 중…'; statusWrap.appendChild(s);
+      }
+      if(scrambling){
+        const t=document.createElement('span'); t.className='badge'; t.textContent='섞는 중…'; statusWrap.appendChild(t);
+      }
+      if(!animating && !scrambling && isSolved()){
+        const w=document.createElement('span'); w.className='badge'; w.textContent='완성!'; statusWrap.appendChild(w);
+      }
+    }
+
+    function isSolved(){
+      const eps = 1e-3;
+      for(const c of group.children){
+        const ix = Math.round(c.position.x / gap);
+        const iy = Math.round(c.position.y / gap);
+        const iz = Math.round(c.position.z / gap);
+        if(Math.abs(c.position.x - ix*gap) > 1e-2) return false;
+        if(Math.abs(c.position.y - iy*gap) > 1e-2) return false;
+        if(Math.abs(c.position.z - iz*gap) > 1e-2) return false;
+      }
+      return true;
+    }
+
+    function randomScramble(len){
+      const seq=[];
+      const baseOf = m => m.charAt(0);
+      const inverseOf = m => (m.endsWith("'")? m[0] : (m.endsWith('2')? m : (m + "'")));
+      while(seq.length < len){
+        const cand = ALL_MOVES[Math.floor(Math.random()*ALL_MOVES.length)];
+        if(seq.length===0){ seq.push(cand); continue; }
+        const last = seq[seq.length-1];
+        if(baseOf(cand)===baseOf(last)) continue;
+        if(seq.length>=2){
+          const prev = seq[seq.length-2];
+          if(cand===inverseOf(last) && baseOf(prev)===baseOf(last)) continue;
+        }
+        seq.push(cand);
+      }
+      return seq;
+    }
+
+    // Axis mapping & sign (clockwise seen from outside -> negative around outward normal)
+    const AXIS = {
+      U: { axis: new THREE.Vector3(0,1,0), layer:+1, sign:+1 },
+      D: { axis: new THREE.Vector3(0,1,0), layer:-1, sign:-1 },
+      R: { axis: new THREE.Vector3(1,0,0), layer:+1, sign:+1 },
+      L: { axis: new THREE.Vector3(1,0,0), layer:-1, sign:-1 },
+      F: { axis: new THREE.Vector3(0,0,1), layer:+1, sign:+1 },
+      B: { axis: new THREE.Vector3(0,0,1), layer:-1, sign:-1 }
+    };
+
+    function parseMove(m){
+      const f = m[0];
+      const prime = m.includes("'");
+      const twice = m.includes('2');
+      return { f, prime, twice };
+    }
+
+    // Select layer members by index with tolerance
+    function inLayer(obj, axisName, layer){
+      if(axisName==='x') return layer>0? (obj.position.x > 0.5*gap) : (obj.position.x < -0.5*gap);
+      if(axisName==='y') return layer>0? (obj.position.y > 0.5*gap) : (obj.position.y < -0.5*gap);
+      if(axisName==='z') return layer>0? (obj.position.z > 0.5*gap) : (obj.position.z < -0.5*gap);
+      return false;
+    }
+
+    const pivot = new THREE.Group();
+    group.add(pivot);
+
+    function ease(t){
+      return SNAP ? t : (1-Math.pow(1-t,3)); // cubic ease-out
+    }
+
+    function roundToGrid(obj){
+      obj.position.x = Math.round(obj.position.x / gap) * gap;
+      obj.position.y = Math.round(obj.position.y / gap) * gap;
+      obj.position.z = Math.round(obj.position.z / gap) * gap;
+      const q = obj.quaternion.clone();
+      const m = new THREE.Euler().setFromQuaternion(q,'XYZ');
+      const snap = (r)=> Math.round(r / (Math.PI/2)) * (Math.PI/2);
+      m.x = snap(m.x); m.y = snap(m.y); m.z = snap(m.z);
+      obj.setRotationFromEuler(m);
+    }
+
+    async function animateLayer(face, prime=false, twice=false){
+      const info = AXIS[face];
+      const baseAngle = (prime? +1 : -1) * info.sign * Math.PI/2;
+      const times = twice ? 2 : 1;
+
+      for(let rep=0; rep<times; rep++){
+        animating = true; renderStatus(); setButtonsDisabled(true);
+        const axisName = (info.axis.x? 'x' : (info.axis.y? 'y':'z'));
+        const selected = group.children.filter(o => o !== pivot && inLayer(o, axisName, info.layer));
+        pivot.rotation.set(0,0,0);
+        pivot.updateMatrixWorld();
+        group.updateMatrixWorld(true);
+        for(const c of selected){ pivot.attach(c); }
+
+        const start = performance.now();
+        const dur = ANIM_MS;
+        await new Promise((resolve)=>{
+          function step(now){
+            const t = Math.min(1, (now-start)/dur);
+            const a = ease(t) * baseAngle;
+            pivot.setRotationFromAxisAngle(info.axis, a);
+            renderer.render(scene, camera);
+            if(t<1){ requestAnimationFrame(step); } else { resolve(); }
+          }
+          requestAnimationFrame(step);
+        });
+
+        for(const c of [...pivot.children]){ group.attach(c); roundToGrid(c); }
+
+        animating = false; renderStatus(); setButtonsDisabled(false);
+      }
+      clickSound();
+    }
+
+    function inverseMove(m){
+      if(m.endsWith("2")) return m;
+      if(m.endsWith("'")) return m[0];
+      return m + "'";
+    }
+
+    async function doMove(m, pushHistory=true){
+      if(animating || scrambling) return;
+      const { f, prime, twice } = parseMove(m);
+      await animateLayer(f, prime, twice);
+      moves.push(m); updateMovesUI();
+      if(pushHistory) history.push(inverseMove(m));
+    }
+
+    // UI buttons for moves
+    const bases = ['U','D','L','R','F','B'];
+    function makeBtn(text, cb){ const b=document.createElement('button'); b.className='btn'; b.textContent=text; b.addEventListener('click', cb); return b; }
+    for(const base of bases){
+      const wrap = document.createElement('div');
+      wrap.appendChild(makeBtn(base, ()=>doMove(base)));
+      wrap.appendChild(makeBtn(base+"'", ()=>doMove(base+"'")));
+      wrap.appendChild(makeBtn(base+"2", ()=>doMove(base+"2")));
+      moveButtonsGrid.appendChild(wrap);
+    }
+
+    // Controls
+    btnReset.addEventListener('click', async ()=>{
+      if(animating || scrambling) return;
+      moves.length = 0; history.length = 0; updateMovesUI();
+      buildCube();
+      clickSound();
+      renderStatus();
+    });
+    btnUndo.addEventListener('click', async ()=>{
+      if(animating || scrambling) return;
+      const inv = history.pop(); if(!inv) return;
+      await doMove(inv, false);
+      moves.pop(); updateMovesUI();
+    });
+    btnResetView.addEventListener('click', ()=>{
       controls.reset();
       camera.position.set(6,6,6);
     });
 
-    // 루프
-    renderer.setAnimationLoop(() => {
-      if (spinning) group.rotation.y += 0.01;
+    btnScramble.addEventListener('click', async ()=>{
+      if(animating || scrambling) return;
+      const seq = randomScramble(25);
+      scrambling = true; renderStatus(); setButtonsDisabled(true);
+      for(const m of seq){
+        await doMove(m);
+        await new Promise(r=> setTimeout(r, 30));
+      }
+      scrambling = false; renderStatus(); setButtonsDisabled(false);
+    });
+
+    // Keyboard
+    window.addEventListener('keydown', (e)=>{
+      const k = e.key.toLowerCase();
+      const baseMap = { u:'U', d:'D', l:'L', r:'R', f:'F', b:'B' };
+      if(baseMap[k] && !animating && !scrambling){
+        e.preventDefault();
+        const base = baseMap[k];
+        const prime = e.shiftKey;
+        doMove(base + (prime?"'":''));
+      } else if(k==='z' && (e.ctrlKey||e.metaKey)){
+        e.preventDefault(); btnUndo.click();
+      }
+    });
+
+    // Render loop
+    renderer.setAnimationLoop(()=>{
       controls.update();
       renderer.render(scene, camera);
     });
+
+    window.addEventListener('pointerdown', ()=> initAudio(), { once:true });
+
+    renderStatus(); updateMovesUI();
   </script>
 </body>
 </html>
